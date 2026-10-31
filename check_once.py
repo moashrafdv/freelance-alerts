@@ -43,6 +43,7 @@ HEADERS = {
     "Accept-Language": "ar,en;q=0.8",
 }
 STATE_FILE = Path("state.json")
+DIAG = {}
 
 
 def load_state():
@@ -114,6 +115,12 @@ def fetch_source(name, cfg):
     response.raise_for_status()
     soup = BeautifulSoup(response.text, "html.parser")
     base = cfg["base"]
+    title_tag = soup.title.get_text(strip=True) if soup.title else None
+    link_count = len(soup.select("a[href*='/project/']"))
+    DIAG[name] = (
+        f"status={response.status_code}, title={title_tag!r}, "
+        f"size={len(response.text)}, project_links={link_count}"
+    )
 
     pairs = []
     for row in soup.select("tr.project-row, .project-row"):
@@ -148,9 +155,8 @@ def main():
     if not TOKEN or not CHAT_ID:
         sys.exit("BOT_TOKEN and CHAT_ID must be set.")
 
-    state = load_state()
-    first_run = state is None
-    state = state or {"seen": [], "last_error": None}
+    state = load_state() or {"seen": [], "last_error": None}
+    first_run = not state["seen"]
     seen = set(state["seen"])
 
     projects, errors, counts = [], [], {}
@@ -159,7 +165,7 @@ def main():
             found = fetch_source(name, cfg)
             counts[name] = len(found)
             if not found:
-                errors.append(f"{name}: قريت 0 مشروع، شكل الصفحة مختلف عن المتوقع")
+                errors.append(f"{name}: قريت 0 مشروع، شكل الصفحة مختلف عن المتوقع ({DIAG.get(name, 'no data')})")
             projects += found
         except Exception as exc:
             counts[name] = 0
@@ -178,11 +184,11 @@ def main():
         if is_match(project):
             new_matches.append(project)
 
-    if first_run:
-        # First run only memorizes what exists now, so you do not get a flood of old projects.
+    if first_run and projects:
+        # First successful read only memorizes what exists now, so you do not get a flood of old projects.
         details = " | ".join(f"{n}: {c}" for n, c in counts.items())
         send(f"✅ البوت اشتغل على GitHub. المشاريع اللي اتقرت: {details}. هبعتلك الجديد بس من دلوقتي.")
-    else:
+    elif not first_run:
         for p in new_matches[:MAX_PER_RUN]:
             budget = p["budget"] if p["budget"] is not None else "?"
             offers = p["offers"] if p["offers"] is not None else "?"
